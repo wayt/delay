@@ -2,8 +2,8 @@ package delay
 
 import (
 	"errors"
-	"github.com/jrallison/go-workers"
 	"github.com/mitchellh/mapstructure"
+	"github.com/wayt/go-workers"
 	"log"
 	"reflect"
 	"time"
@@ -20,8 +20,10 @@ func Configure(options map[string]string) {
 }
 
 type Function struct {
-	Name string
-	fv   reflect.Value // Kind() == reflect.Func
+	Name       string
+	fv         reflect.Value // Kind() == reflect.Func
+	retryCount int
+	interval   int
 }
 
 func Func(name string, i interface{}) *Function {
@@ -41,14 +43,28 @@ func Func(name string, i interface{}) *Function {
 	return f
 }
 
+func (f *Function) RetryCount(count int) *Function {
+	f.retryCount = count
+	return f
+}
+
+func (f *Function) Interval(sec int) *Function {
+	f.interval = sec
+	return f
+}
+
 func (f *Function) Delay(args ...interface{}) (string, error) {
 
-	return workers.Enqueue(queue, f.Name, args)
+	return f.DelayAt(time.Now(), args...)
 }
 
 func (f *Function) DelayAt(at time.Time, args ...interface{}) (string, error) {
 
-	return workers.EnqueueAt(queue, f.Name, at, args)
+	return workers.EnqueueWithOptions(queue, f.Name, args, workers.EnqueueOptions{
+		At:            float64(at.UnixNano()) / workers.NanoSecondPrecision,
+		Retry:         f.retryCount > 0,
+		RetryInterval: f.interval,
+	})
 }
 
 func (f *Function) DelayIn(in time.Duration, args ...interface{}) (string, error) {
