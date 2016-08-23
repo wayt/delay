@@ -2,6 +2,7 @@ package delay
 
 import (
 	"errors"
+	"fmt"
 	"github.com/mitchellh/mapstructure"
 	"github.com/wayt/go-workers"
 	"log"
@@ -72,14 +73,15 @@ func (f *Function) DelayIn(in time.Duration, args ...interface{}) (string, error
 	return f.DelayAt(time.Now().Add(in), args...)
 }
 
-func (f *Function) call(args ...interface{}) {
+func (f *Function) call(args ...interface{}) error {
 
 	ft := f.fv.Type()
 	in := []reflect.Value{}
 
 	if len(args) != ft.NumIn() {
-		log.Printf("[%s]: bad arguments count, got %d, expect %d\n", f.Name, len(args), ft.NumIn())
-		return
+		err := workers.Fatalf("[%s]: bad arguments count, got %d, expect %d", f.Name, len(args), ft.NumIn())
+		log.Println(err.Error())
+		return err
 	}
 
 	if ft.NumIn() > 0 {
@@ -113,27 +115,28 @@ func (f *Function) call(args ...interface{}) {
 
 	if n := ft.NumOut(); n > 0 && ft.Out(n-1) == errorType {
 		if errv := out[n-1]; !errv.IsNil() {
-			panic(errv) // Will be catch by retry middleware
+			return errv.Interface().(error)
 		}
 	}
+
+	return nil
 }
 
 func SetQueue(q string) {
 	queue = q
 }
-func Worker(concurrency int) {
-	workers.Process(queue, handler, concurrency)
+func Worker(concurrency int, mids ...workers.Action) {
+	workers.Process(queue, handler, concurrency, mids...)
 	workers.Run()
 }
 
-func handler(message *workers.Msg) {
+func handler(message *workers.Msg) error {
 
 	funcName := message.Get("class").MustString()
 
 	fun, ok := funcs[funcName]
 	if !ok {
-		log.Printf("unknown function name [%s], ignoring...\n", funcName)
-		return
+		return fmt.Errorf("unknown function name [%s], ignoring...\n", funcName)
 	}
 
 	var args []interface{}
@@ -142,5 +145,9 @@ func handler(message *workers.Msg) {
 		args = i.([]interface{})
 	}
 
-	fun.call(args...)
+	if err := fun.call(args...); err != nil {
+		return err
+	}
+
+	return nil
 }
